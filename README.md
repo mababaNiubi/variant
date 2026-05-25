@@ -2,6 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/mababaNiubi/variant.svg)](https://pkg.go.dev/github.com/mababaNiubi/variant)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[中文](README_CN.md)
 
 A generic, dynamically-typed value container for Go that turns data into a weakly-typed variant. **Variant** is a discriminated union that can hold any of eight runtime types — Empty, Bool, Int, UInt, Float, String, List, Map — with JSON/MessagePack serialization, mixed-type arithmetic, and reflection-based decoding from native Go values.
 

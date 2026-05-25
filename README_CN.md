@@ -2,6 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/mababaNiubi/variant.svg)](https://pkg.go.dev/github.com/mababaNiubi/variant)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[English](README.md)
 
 Go 语言的通用动态类型容器使数据变成弱类型。**Variant** 是一个可辨识联合类型，支持八种运行时类型 —— Empty、Bool、Int、UInt、Float、String、List、Map，并提供 JSON/MessagePack 序列化、混合类型算术运算以及基于反射的 Go 原生类型解码。
 
@@ -65,8 +66,6 @@ v := variant.NewValueMap(map[string]variant.Variant{...}) // TypeMap
 `New()` 接受的类型: `bool`, `string`, `float64`, `float32`, `int`, `int8`–`int64`, `uint`–`uint64`, `[]byte`, `Variant`, `*Variant`, `[]Variant`, `map[string]Variant`，以及任意结构体（通过反射）。
 
 对于字符串输入，`New()` 按以下优先级尝试解析：int → float → empty → JSON → 普通字符串。
-
-```
 
 ## 类型转换
 
