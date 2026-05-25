@@ -1,6 +1,5 @@
 # variant
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/mababaNiubi/variant.svg)](https://pkg.go.dev/github.com/mababaNiubi/variant)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [中文](README_CN.md)
 
