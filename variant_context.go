@@ -78,7 +78,7 @@ func GetStringValueType(s string) Type {
 }
 
 // 是否为科学计数法
-func isSciNum(num1, num2 string) bool {
+func checkSciParts(num1, num2 string) bool {
 	// e 前后字符串长度为0 是错误的
 	if len(num1) == 0 || len(num2) == 0 {
 		return false
@@ -91,7 +91,7 @@ func IsSciNum(s string) bool {
 	for i := 0; i < len(s); i++ {
 		// 存在 e 或 E, 判断是否为科学计数法
 		if s[i] == 'e' || s[i] == 'E' {
-			return isSciNum(s[:i], s[i+1:])
+			return checkSciParts(s[:i], s[i+1:])
 		}
 	}
 	return false

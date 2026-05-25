@@ -248,7 +248,7 @@ func (v Variant) AsBool() (bool, error) {
 		}
 		return true, nil
 	case TypeFloat64:
-		if int32(*(*float64)(unsafe.Pointer(&v.numberValue))) == 0 {
+		if *(*float64)(unsafe.Pointer(&v.numberValue)) == 0 {
 			return false, nil
 		}
 		return true, nil
@@ -296,7 +296,7 @@ func (v Variant) AsUInt64() (uint64, error) {
 		return uint64(v.numberValue), nil
 	case TypeFloat64:
 		f := *(*float64)(unsafe.Pointer(&v.numberValue))
-		if f < math.MinInt32 || f > math.MaxInt32 {
+		if f < 0 || f > float64(^uint64(0)) {
 			return 0, errors.New(errorVariantValueOverFlow)
 		}
 		return uint64(f), nil

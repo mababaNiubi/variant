@@ -242,7 +242,7 @@ func (v Variant) Divide(va Variant) (Variant, error) {
 	}
 }
 
-func (v Variant) Decimal(accuracy string) Variant {
+func (v Variant) Decimal(accuracy int) Variant {
 	switch v.variantType {
 	case TypeList:
 		valList := v.complexValue.([]Variant)
@@ -251,7 +251,7 @@ func (v Variant) Decimal(accuracy string) Variant {
 		}
 		v.complexValue = valList
 	case TypeFloat64:
-		*(*float64)(unsafe.Pointer(&v.numberValue)), _ = strconv.ParseFloat(fmt.Sprintf("%."+accuracy+"f", *(*float64)(unsafe.Pointer(&v.numberValue))), 64)
+		*(*float64)(unsafe.Pointer(&v.numberValue)), _ = strconv.ParseFloat(fmt.Sprintf("%.*f", accuracy, *(*float64)(unsafe.Pointer(&v.numberValue))), 64)
 	default:
 		//不需要操作
 	}

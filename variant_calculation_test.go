@@ -264,14 +264,14 @@ func TestDivide_Empty(t *testing.T) {
 
 func TestDecimal(t *testing.T) {
 	v := NewFloat64(3.14159265)
-	v = v.Decimal("2")
+	v = v.Decimal(2)
 	if s := v.AsString(); s != "3.14" {
 		t.Errorf("expected '3.14', got '%s'", s)
 	}
 
 	// List of floats
 	list := NewValueList([]Variant{NewFloat64(1.234), NewFloat64(5.678)})
-	list = list.Decimal("1")
+	list = list.Decimal(1)
 	v0, _ := list.ListGet(0)
 	if s := v0.AsString(); s != "1.2" {
 		t.Errorf("expected '1.2', got '%s'", s)
@@ -279,7 +279,7 @@ func TestDecimal(t *testing.T) {
 
 	// Non-float unaffected
 	iv := NewInt(42)
-	iv = iv.Decimal("2")
+	iv = iv.Decimal(2)
 	if i, _ := iv.AsInt64(); i != 42 {
 		t.Errorf("int should be unchanged, got %d", i)
 	}
