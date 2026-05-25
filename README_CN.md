@@ -3,7 +3,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/mababaNiubi/variant.svg)](https://pkg.go.dev/github.com/mababaNiubi/variant)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Go 语言的通用动态类型容器使数据变成弱类型。**Variant** 是一个可辨识联合类型，支持八种运行时类型 —— Empty、Bool、Int64、UInt64、Float64、String、List、Map，并提供 JSON/MessagePack 序列化、混合类型算术运算以及基于反射的 Go 原生类型解码。
+Go 语言的通用动态类型容器使数据变成弱类型。**Variant** 是一个可辨识联合类型，支持八种运行时类型 —— Empty、Bool、Int、UInt、Float、String、List、Map，并提供 JSON/MessagePack 序列化、混合类型算术运算以及基于反射的 Go 原生类型解码。
 
 专为数据传输、采集、遥测管道等场景设计，数据常以弱类型字符串的形式到达，需要高效的数值计算和存储。
 
@@ -12,19 +12,6 @@ Go 语言的通用动态类型容器使数据变成弱类型。**Variant** 是�
 ```bash
 go get github.com/mababaNiubi/variant
 ```
-
-## 支持的类型
-
-| 常量           | Go 等价类型           | 说明                 |
-|----------------|-----------------------|----------------------|
-| `TypeEmpty`    | `nil`                 | 空值 / null          |
-| `TypeBool`     | `bool`                | 布尔值               |
-| `TypeInt64`    | `int64`               | 有符号 64 位整数     |
-| `TypeUInt64`   | `uint64`              | 无符号 64 位整数     |
-| `TypeFloat64`  | `float64`             | 64 位浮点数          |
-| `TypeString`   | `string`              | UTF-8 字符串         |
-| `TypeList`     | `[]Variant`           | 有序 Variant 列表    |
-| `TypeMap`      | `map[string]Variant`  | 字符串键的 Variant 映射 |
 
 ## 快速开始
 
@@ -79,17 +66,6 @@ v := variant.NewValueMap(map[string]variant.Variant{...}) // TypeMap
 
 对于字符串输入，`New()` 按以下优先级尝试解析：int → float → empty → JSON → 普通字符串。
 
-## 类型查询
-
-```go
-v.Type()       // 获取 Type 枚举
-v.IsEmpty()    // TypeEmpty、空字符串、全空列表、空 map 时返回 true
-v.IsZero()     // 数值为零或字符串可解析为 0 时返回 true
-v.IsNumber()   // int/uint/float 或数值字符串时返回 true
-v.IsFloat()    // float64 或小数字符串时返回 true
-v.IsTrue()     // 真值测试
-v.IsContainer()// List 或 Map 时返回 true
-v.Len()        // List / Map / String 的长度
 ```
 
 ## 类型转换

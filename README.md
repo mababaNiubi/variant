@@ -3,7 +3,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/mababaNiubi/variant.svg)](https://pkg.go.dev/github.com/mababaNiubi/variant)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A generic, dynamically-typed value container for Go that turns data into a weakly-typed variant. **Variant** is a discriminated union that can hold any of eight runtime types — Empty, Bool, Int64, UInt64, Float64, String, List, Map — with JSON/MessagePack serialization, mixed-type arithmetic, and reflection-based decoding from native Go values.
+A generic, dynamically-typed value container for Go that turns data into a weakly-typed variant. **Variant** is a discriminated union that can hold any of eight runtime types — Empty, Bool, Int, UInt, Float, String, List, Map — with JSON/MessagePack serialization, mixed-type arithmetic, and reflection-based decoding from native Go values.
 
 Designed for data transmission, collection, and telemetry pipelines where values arrive as loosely-typed strings and need efficient numeric computation and storage.
 
@@ -12,19 +12,6 @@ Designed for data transmission, collection, and telemetry pipelines where values
 ```bash
 go get github.com/mababaNiubi/variant
 ```
-
-## Supported Types
-
-| Constant      | Go equivalent        | Description                |
-|---------------|----------------------|----------------------------|
-| `TypeEmpty`   | `nil`                | Null / empty value         |
-| `TypeBool`    | `bool`               | Boolean                    |
-| `TypeInt64`   | `int64`              | Signed 64-bit integer      |
-| `TypeUInt64`  | `uint64`             | Unsigned 64-bit integer    |
-| `TypeFloat64` | `float64`            | 64-bit floating point      |
-| `TypeString`  | `string`             | UTF-8 string               |
-| `TypeList`    | `[]Variant`          | Ordered list of variants   |
-| `TypeMap`     | `map[string]Variant` | String-keyed variant map   |
 
 ## Quick Start
 
@@ -79,18 +66,6 @@ v := variant.NewValueMap(map[string]variant.Variant{...}) // TypeMap
 
 For string inputs, `New()` tries to parse as: int → float → empty → JSON → plain string.
 
-## Type Queries
-
-```go
-v.Type()       // Type enum
-v.IsEmpty()    // true for TypeEmpty, empty string, all-empty list, empty map
-v.IsZero()     // true for numeric zero or string that parses to 0
-v.IsNumber()   // true for int/uint/float or numeric string
-v.IsFloat()    // true for float64 or decimal string
-v.IsTrue()     // truthy test
-v.IsContainer()// true for List or Map
-v.Len()        // length for List, Map, or String
-```
 
 ## Type Conversion
 
