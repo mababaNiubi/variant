@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [English](README.md)
 
-Go 语言的通用动态类型容器使数据变成弱类型。**Variant** 是一个可辨识联合类型，支持八种运行时类型 —— Empty、Bool、Int、UInt、Float、String、List、Map，并提供 JSON/MessagePack 序列化、混合类型算术运算以及基于反射的 Go 原生类型解码。
+Go 语言的通用动态类型容器使数据变成弱类型。**Variant** 是一个可辨识联合类型，支持八种运行时类型 —— Empty、Bool、Int、UInt、Float、String、List、Map，并提供 JSON/自定义二进制序列化、混合类型算术运算以及基于反射的 Go 原生类型解码。
 
 专为数据传输、采集、遥测管道等场景设计，数据常以弱类型字符串的形式到达，需要高效的数值计算和存储。
 
@@ -147,7 +147,7 @@ v.UnmarshalJSON([]byte(`{"key":"value"}`))
 v, err := variant.UnmarshalJSON([]byte(`[1,2,3]`))
 ```
 
-## 二进制序列化 (MessagePack)
+## 二进制序列化
 
 ```go
 // 带格式标记（适用于 WAL / 存储）
@@ -155,12 +155,19 @@ data, err := v.MarshalBinary()
 v, n, err := variant.UnmarshalBinary(data)
 ok := variant.IsBinaryFormat(data)
 
-// 不带标记（用于嵌入更大的 msgpack 结构体中）
-data, err := v.MarshalMsgpack()
-v.UnmarshalMsgpack(data)
+// 零分配批量编码 — 复用同一个 buffer
+var buf []byte
+for _, v := range manyVariants {
+    buf = v.AppendBinary(buf)
+}
 ```
 
-二进制格式在头部添加一个 `0x01` 字节以区分旧的 JSON 格式。
+二进制格式采用紧凑的自定义编码：
+- 1 字节格式标记 (`0x01`) 用于区分 JSON
+- 1 字节类型标签 + 固定宽度标量负载（所有数值类型 8 字节）
+- 字符串/容器类型使用 `uint32` 长度前缀
+
+零外部依赖 — 纯 Go 标准库实现。
 
 ## 解码 Go 结构体
 
@@ -178,7 +185,8 @@ v := variant.New(Person{Name: "Alice", Age: 30})
 ## 性能设计
 
 - **内联数值存储**：整数、布尔值和 float64 通过 `unsafe.Pointer` 位转换存储在 `int64` 字段中 —— 常见数值路径无堆分配。
-- **零分配 msgpack 编码**：`encodeVariant` 直接写入编码器，无中间分配。
+- **零分配二进制编码**：`AppendBinary` 直接写入调用者提供的 `[]byte` 缓冲区，无中间 buffer、无 encoder 对象、无第三方库开销。每个标量值只需一次 `append` 调用。
+- **零分配二进制解码**：`UnmarshalBinary` 解析类型标签并直接通过 `encoding/binary` 读取固定宽度负载 —— 无 `interface{}` 装箱、无 decoder 分配。
 - **延迟字符串解析**：数值字符串在被请求类型转换前不会执行解析。
 
 ## License

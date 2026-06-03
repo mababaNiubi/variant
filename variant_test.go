@@ -866,6 +866,115 @@ func TestMarshalBinary(t *testing.T) {
 	}
 }
 
+// ─── Benchmarks ────────────────────────────────────────────────────────────────
+
+func BenchmarkMarshalBinary_Float64(b *testing.B) {
+	v := NewFloat64(3.141592653589793)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = v.MarshalBinary()
+	}
+}
+
+func BenchmarkUnmarshalBinary_Float64(b *testing.B) {
+	v := NewFloat64(3.141592653589793)
+	data, _ := v.MarshalBinary()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = UnmarshalBinary(data)
+	}
+}
+
+func BenchmarkMarshalBinary_Int64(b *testing.B) {
+	v := NewInt64(9223372036854775807)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = v.MarshalBinary()
+	}
+}
+
+func BenchmarkUnmarshalBinary_Int64(b *testing.B) {
+	v := NewInt64(9223372036854775807)
+	data, _ := v.MarshalBinary()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = UnmarshalBinary(data)
+	}
+}
+
+func BenchmarkMarshalBinary_String(b *testing.B) {
+	v := NewString("hello world")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = v.MarshalBinary()
+	}
+}
+
+func BenchmarkUnmarshalBinary_String(b *testing.B) {
+	v := NewString("hello world")
+	data, _ := v.MarshalBinary()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = UnmarshalBinary(data)
+	}
+}
+
+func BenchmarkAppendBinary_Batch(b *testing.B) {
+	variants := make([]Variant, 1000)
+	for i := range variants {
+		variants[i] = NewFloat64(float64(i) * 1.5)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf []byte
+		for j := range variants {
+			buf = variants[j].AppendBinary(buf)
+		}
+	}
+}
+
+func BenchmarkMarshalBinary_NestedMap(b *testing.B) {
+	v := NewValueMap(map[string]Variant{
+		"name": NewString("test"),
+		"val":  NewFloat64(3.14),
+		"nested": NewValueList([]Variant{
+			NewInt64(1),
+			NewBool(true),
+			NewString("x"),
+		}),
+	})
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = v.MarshalBinary()
+	}
+}
+
+func BenchmarkUnmarshalBinary_NestedMap(b *testing.B) {
+	v := NewValueMap(map[string]Variant{
+		"name": NewString("test"),
+		"val":  NewFloat64(3.14),
+		"nested": NewValueList([]Variant{
+			NewInt64(1),
+			NewBool(true),
+			NewString("x"),
+		}),
+	})
+	data, _ := v.MarshalBinary()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = UnmarshalBinary(data)
+	}
+}
+
 func TestMarshalBinaryNested(t *testing.T) {
 	tests := []Variant{
 		NewValueList([]Variant{NewInt64(1), NewFloat64(2.5), NewString("x")}),
