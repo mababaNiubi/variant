@@ -1,168 +1,195 @@
 package variant
 
 import (
-	"bytes"
+	"encoding/binary"
 	"fmt"
-	"unsafe"
-
-	"github.com/vmihailenco/msgpack/v5"
+	"math"
 )
 
-// msgpackFormatMarker is the 1-byte prefix for the WAL binary format.
-// It discriminates from legacy JSON (which starts with '{', '"', digits, etc.).
-const msgpackFormatMarker = 0x01
+// binaryFormatMarker discriminates binary format from legacy JSON (which starts with '{', '"', digits, etc.).
+const binaryFormatMarker = 0x01
 
-// ─── msgpack.Marshaler / Unmarshaler (for JsonEncoder, column compression) ───
+// ─── Encoder ──────────────────────────────────────────────────────────────────
 
-// MarshalMsgpack implements msgpack.Marshaler. Encodes the variant without
-// a format marker — suitable for use inside larger msgpack structures.
-func (v Variant) MarshalMsgpack() ([]byte, error) {
-	var buf bytes.Buffer
-	enc := msgpack.NewEncoder(&buf)
-	if err := encodeVariant(enc, v); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+// AppendBinary appends the binary encoding of v (with format marker) to dst.
+// For batch encoding, reuse dst across calls to avoid allocations.
+func (v Variant) AppendBinary(dst []byte) []byte {
+	dst = append(dst, binaryFormatMarker)
+	return v.appendValue(dst)
 }
 
-// UnmarshalMsgpack implements msgpack.Unmarshaler.
-func (v *Variant) UnmarshalMsgpack(data []byte) error {
-	dec := msgpack.NewDecoder(bytes.NewReader(data))
-	decoded, err := decodeVariant(dec)
-	if err != nil {
-		return err
-	}
-	*v = decoded
-	return nil
-}
-
-// ─── WAL binary format (with format marker) ───
-
-// MarshalBinary encodes the variant with a 1-byte format marker for WAL storage.
-func (v Variant) MarshalBinary() ([]byte, error) {
-	raw, err := v.MarshalMsgpack()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]byte, 1+len(raw))
-	out[0] = msgpackFormatMarker
-	copy(out[1:], raw)
-	return out, nil
-}
-
-// UnmarshalBinary decodes a msgpack-encoded variant with format marker.
-func UnmarshalBinary(data []byte) (Variant, int, error) {
-	if len(data) < 2 || data[0] != msgpackFormatMarker {
-		return Variant{}, 0, fmt.Errorf("not a msgpack binary variant")
-	}
-	var v Variant
-	if err := v.UnmarshalMsgpack(data[1:]); err != nil {
-		return Variant{}, 0, err
-	}
-	return v, len(data), nil
-}
-
-// IsBinaryFormat reports whether data starts with the msgpack format marker.
-func IsBinaryFormat(data []byte) bool {
-	return len(data) > 0 && data[0] == msgpackFormatMarker
-}
-
-// ─── Recursive encoder (zero-allocation write path) ───
-
-// encodeVariant encodes a single Variant directly to the msgpack encoder.
-func encodeVariant(enc *msgpack.Encoder, v Variant) error {
+// appendValue appends [type][payload] without format marker. Used recursively
+// for List/Map elements so nested values don't carry redundant markers.
+func (v Variant) appendValue(dst []byte) []byte {
+	dst = append(dst, byte(v.variantType))
 	switch v.variantType {
 	case TypeEmpty:
-		return enc.EncodeNil()
+		// no payload
 	case TypeBool:
-		return enc.EncodeBool(v.numberValue != 0)
-	case TypeInt64:
-		return enc.EncodeInt64(v.numberValue)
-	case TypeUInt64:
-		return enc.EncodeUint64(uint64(v.numberValue))
-	case TypeFloat64:
-		return enc.EncodeFloat64(*(*float64)(unsafe.Pointer(&v.numberValue)))
+		if v.numberValue != 0 {
+			dst = append(dst, 1)
+		} else {
+			dst = append(dst, 0)
+		}
+	case TypeInt64, TypeUInt64, TypeFloat64:
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(v.numberValue))
+		dst = append(dst, b[:]...)
 	case TypeString:
-		return enc.EncodeString(v.complexValue.(string))
+		s := v.complexValue.(string)
+		dst = appendString(dst, s)
 	case TypeList:
 		list := v.complexValue.([]Variant)
-		if err := enc.EncodeArrayLen(len(list)); err != nil {
-			return err
-		}
+		var lb [4]byte
+		binary.BigEndian.PutUint32(lb[:], uint32(len(list)))
+		dst = append(dst, lb[:]...)
 		for i := range list {
-			if err := encodeVariant(enc, list[i]); err != nil {
-				return err
-			}
+			dst = list[i].appendValue(dst)
 		}
-		return nil
 	case TypeMap:
 		mp := v.complexValue.(map[string]Variant)
-		if err := enc.EncodeMapLen(len(mp)); err != nil {
-			return err
-		}
+		var lb [4]byte
+		binary.BigEndian.PutUint32(lb[:], uint32(len(mp)))
+		dst = append(dst, lb[:]...)
 		for k, val := range mp {
-			if err := enc.EncodeString(k); err != nil {
-				return err
-			}
-			if err := encodeVariant(enc, val); err != nil {
-				return err
-			}
+			dst = appendString(dst, k)
+			dst = val.appendValue(dst)
 		}
-		return nil
-	default:
-		return fmt.Errorf("unknown variant type: %v", v.variantType)
 	}
+	return dst
 }
 
-// ─── Recursive decoder ───
+func appendString(dst []byte, s string) []byte {
+	var lb [4]byte
+	binary.BigEndian.PutUint32(lb[:], uint32(len(s)))
+	dst = append(dst, lb[:]...)
+	dst = append(dst, s...)
+	return dst
+}
 
-// decodeVariant decodes a single Variant from the msgpack decoder.
-func decodeVariant(dec *msgpack.Decoder) (Variant, error) {
-	raw, err := dec.DecodeInterface()
+// MarshalBinary encodes the variant with format marker. Convenience wrapper
+// around AppendBinary.
+func (v Variant) MarshalBinary() ([]byte, error) {
+	return v.AppendBinary(nil), nil
+}
+
+// ─── Decoder ──────────────────────────────────────────────────────────────────
+
+// IsBinaryFormat reports whether data starts with the binary format marker.
+func IsBinaryFormat(data []byte) bool {
+	return len(data) > 0 && data[0] == binaryFormatMarker
+}
+
+// UnmarshalBinary decodes a binary-encoded variant with format marker.
+// Returns the variant and the total number of bytes consumed.
+func UnmarshalBinary(data []byte) (Variant, int, error) {
+	if len(data) < 2 || data[0] != binaryFormatMarker {
+		return Variant{}, 0, fmt.Errorf("not a binary variant")
+	}
+	v, n, err := readValue(data[1:])
 	if err != nil {
-		return Variant{}, err
+		return Variant{}, 0, err
 	}
-	return decodeInterface(raw)
+	return v, n + 1, nil // +1 for the marker byte
 }
 
-// decodeInterface converts a Go value from DecodeInterface to Variant.
-func decodeInterface(raw interface{}) (Variant, error) {
-	switch v := raw.(type) {
-	case nil:
-		return NewEmpty(), nil
-	case bool:
-		return NewBool(v), nil
-	case int64:
-		return NewInt64(v), nil
-	case int8:
-		return NewInt64(int64(v)), nil
-	case uint64:
-		return NewUInt64(v), nil
-	case float64:
-		return NewFloat64(v), nil
-	case string:
-		return NewString(v), nil
-	case []interface{}:
-		list := make([]Variant, len(v))
-		for i, item := range v {
-			var err error
-			list[i], err = decodeInterface(item)
-			if err != nil {
-				return Variant{}, err
-			}
-		}
-		return NewValueList(list), nil
-	case map[string]interface{}:
-		mp := make(map[string]Variant, len(v))
-		for k, item := range v {
-			var err error
-			mp[k], err = decodeInterface(item)
-			if err != nil {
-				return Variant{}, err
-			}
-		}
-		return NewValueMap(mp), nil
-	default:
-		return Variant{}, fmt.Errorf("unsupported type: %T", raw)
+// readValue reads a [type][payload] variant from data. Does not expect a format marker.
+func readValue(data []byte) (Variant, int, error) {
+	if len(data) < 1 {
+		return Variant{}, 0, fmt.Errorf("empty variant data")
 	}
+	t := Type(data[0])
+	switch t {
+	case TypeEmpty:
+		return NewEmpty(), 1, nil
+	case TypeBool:
+		if len(data) < 2 {
+			return Variant{}, 0, fmt.Errorf("short bool")
+		}
+		return NewBool(data[1] != 0), 2, nil
+	case TypeInt64:
+		if len(data) < 9 {
+			return Variant{}, 0, fmt.Errorf("short int64")
+		}
+		return NewInt64(int64(binary.BigEndian.Uint64(data[1:9]))), 9, nil
+	case TypeUInt64:
+		if len(data) < 9 {
+			return Variant{}, 0, fmt.Errorf("short uint64")
+		}
+		return NewUInt64(binary.BigEndian.Uint64(data[1:9])), 9, nil
+	case TypeFloat64:
+		if len(data) < 9 {
+			return Variant{}, 0, fmt.Errorf("short float64")
+		}
+		bits := binary.BigEndian.Uint64(data[1:9])
+		return NewFloat64(math.Float64frombits(bits)), 9, nil
+	case TypeString:
+		return readStringValue(data)
+	case TypeList:
+		return readListValue(data)
+	case TypeMap:
+		return readMapValue(data)
+	default:
+		return Variant{}, 0, fmt.Errorf("unknown variant type: %d", t)
+	}
+}
+
+func readStringValue(data []byte) (Variant, int, error) {
+	if len(data) < 5 {
+		return Variant{}, 0, fmt.Errorf("short string header")
+	}
+	slen := binary.BigEndian.Uint32(data[1:5])
+	if uint32(len(data)) < 5+slen {
+		return Variant{}, 0, fmt.Errorf("short string data")
+	}
+	// unsafe string conversion: the backing array of data lives as long as the caller needs it,
+	// but Variant may outlive the input buffer, so we must copy.
+	s := string(data[5 : 5+slen])
+	return NewString(s), 5 + int(slen), nil
+}
+
+func readListValue(data []byte) (Variant, int, error) {
+	if len(data) < 5 {
+		return Variant{}, 0, fmt.Errorf("short list header")
+	}
+	count := binary.BigEndian.Uint32(data[1:5])
+	offset := 5
+	list := make([]Variant, count)
+	for i := uint32(0); i < count; i++ {
+		elem, n, err := readValue(data[offset:])
+		if err != nil {
+			return Variant{}, 0, err
+		}
+		list[i] = elem
+		offset += n
+	}
+	return NewValueList(list), offset, nil
+}
+
+func readMapValue(data []byte) (Variant, int, error) {
+	if len(data) < 5 {
+		return Variant{}, 0, fmt.Errorf("short map header")
+	}
+	count := binary.BigEndian.Uint32(data[1:5])
+	offset := 5
+	mp := make(map[string]Variant, count)
+	for i := uint32(0); i < count; i++ {
+		if len(data)-offset < 4 {
+			return Variant{}, 0, fmt.Errorf("short map key header")
+		}
+		klen := binary.BigEndian.Uint32(data[offset : offset+4])
+		offset += 4
+		if len(data)-offset < int(klen) {
+			return Variant{}, 0, fmt.Errorf("short map key data")
+		}
+		key := string(data[offset : offset+int(klen)])
+		offset += int(klen)
+		val, n, err := readValue(data[offset:])
+		if err != nil {
+			return Variant{}, 0, err
+		}
+		mp[key] = val
+		offset += n
+	}
+	return NewValueMap(mp), offset, nil
 }

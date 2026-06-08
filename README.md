@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [中文](README_CN.md)
 
-A generic, dynamically-typed value container for Go that turns data into a weakly-typed variant. **Variant** is a discriminated union that can hold any of eight runtime types — Empty, Bool, Int, UInt, Float, String, List, Map — with JSON/MessagePack serialization, mixed-type arithmetic, and reflection-based decoding from native Go values.
+A generic, dynamically-typed value container for Go that turns data into a weakly-typed variant. **Variant** is a discriminated union that can hold any of eight runtime types — Empty, Bool, Int, UInt, Float, String, List, Map — with JSON/Custom binary serialization, mixed-type arithmetic, and reflection-based decoding from native Go values.
 
 Designed for data transmission, collection, and telemetry pipelines where values arrive as loosely-typed strings and need efficient numeric computation and storage.
 
@@ -148,20 +148,27 @@ v.UnmarshalJSON([]byte(`{"key":"value"}`))
 v, err := variant.UnmarshalJSON([]byte(`[1,2,3]`))
 ```
 
-## Binary Serialization (MessagePack)
+## Binary Serialization
 
 ```go
-// With format marker (for WAL / storage)
+// Encode with format marker (for WAL / storage)
 data, err := v.MarshalBinary()
 v, n, err := variant.UnmarshalBinary(data)
 ok := variant.IsBinaryFormat(data)
 
-// Without marker (for embedding in larger msgpack payloads)
-data, err := v.MarshalMsgpack()
-v.UnmarshalMsgpack(data)
+// Zero-allocation batch encoding — reuse the same buffer
+var buf []byte
+for _, v := range manyVariants {
+    buf = v.AppendBinary(buf)
+}
 ```
 
-The binary format prepends a `0x01` byte to distinguish from legacy JSON.
+The binary format uses a compact custom encoding:
+- 1-byte format marker (`0x01`) to distinguish from JSON
+- 1-byte type tag followed by fixed-width scalar payloads (8 bytes for all numeric types)
+- `uint32` length prefixes for string/container types
+
+No external dependencies — pure Go stdlib.
 
 ## Decoding Go Structs
 
@@ -179,7 +186,8 @@ Uses reflection. Struct fields use `json` tags for key names, falling back to th
 ## Performance Design
 
 - **Inline numeric storage**: Integers, booleans, and float64 values are stored in an `int64` field via `unsafe.Pointer` bit-casting — no heap allocation for the common numeric path.
-- **Zero-allocation msgpack encoding**: `encodeVariant` writes directly to the encoder without intermediate allocations.
+- **Zero-allocation binary encoding**: `AppendBinary` writes directly to a caller-provided `[]byte` buffer. No intermediate buffers, no encoder objects, no third-party library overhead. Each scalar value encodes in a single `append` call.
+- **Zero-allocation binary decoding**: `UnmarshalBinary` parses the type tag and reads fixed-width payloads directly via `encoding/binary` — no `interface{}` boxing, no decoder allocations.
 - **Lazy string parsing**: Numeric strings are not parsed until a typed conversion is requested.
 
 ## License
