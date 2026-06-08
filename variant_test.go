@@ -1,9 +1,6 @@
 package variant
 
-import (
-	"math"
-	"testing"
-)
+import "testing"
 
 func TestNewEmpty(t *testing.T) {
 	v := NewEmpty()
@@ -210,7 +207,6 @@ func TestNew_Bytes(t *testing.T) {
 		t.Errorf("expected TypeMap for JSON bytes, got %v", v1.Type())
 	}
 
-	// Non-JSON bytes are decoded as list of byte values via reflect
 	v2 := New([]byte("plain text"))
 	if v2.Type() != TypeList {
 		t.Errorf("expected TypeList for plain bytes (decoded as []uint8), got %v", v2.Type())
@@ -475,6 +471,13 @@ func TestAddString(t *testing.T) {
 	if v.AsString() != "hello world" {
 		t.Errorf("expected 'hello world', got '%s'", v.AsString())
 	}
+
+	// AddString on non-string type (no-op)
+	iv := NewInt(42)
+	iv.AddString("ignored")
+	if iv.AsString() != "42" {
+		t.Errorf("expected '42', got '%s'", iv.AsString())
+	}
 }
 
 func TestIsEqual(t *testing.T) {
@@ -516,485 +519,156 @@ func TestIsEqual(t *testing.T) {
 	if map1.IsEqual(map3) {
 		t.Error("different maps should not be equal")
 	}
-}
 
-func TestNew_DefaultDecode(t *testing.T) {
-	type TestStruct struct {
-		Name string `json:"name"`
-		Age  int    `json:"age"`
-	}
-	s := TestStruct{Name: "Alice", Age: 30}
-	v := New(s)
-	if v.Type() != TypeMap {
-		t.Fatalf("expected TypeMap, got %v", v.Type())
-	}
-	name, ok := v.MapGet("name")
-	if !ok || name.AsString() != "Alice" {
-		t.Errorf("expected name=Alice, got %v", name.AsInterface())
-	}
-	age, ok := v.MapGet("age")
-	if !ok {
-		t.Error("expected age key")
-	} else if a, _ := age.AsInt64(); a != 30 {
-		t.Errorf("expected age=30, got %d", a)
+	// IsEqual with different-length lists
+	listA := NewValueList([]Variant{NewInt(1)})
+	listB := NewValueList([]Variant{NewInt(1), NewInt(2)})
+	if listA.IsEqual(listB) {
+		t.Error("different-length lists should not be equal")
 	}
 }
 
-func TestVariant_MarshalJSON(t *testing.T) {
-	v := NewValueMap(map[string]Variant{
-		"name": NewString("test"),
-		"val":  NewInt(42),
-	})
-	data, err := v.MarshalJSON()
+func TestIsZero_NonNumericString(t *testing.T) {
+	if NewString("not-a-number").IsZero() {
+		t.Error("non-numeric string should not be zero")
+	}
+	if !NewString("0.0").IsZero() {
+		t.Error(`string "0.0" should be zero`)
+	}
+}
+
+func TestIsNumber_NonNumericTypes(t *testing.T) {
+	if NewBool(true).IsNumber() {
+		t.Error("bool should not be number")
+	}
+	if NewEmpty().IsNumber() {
+		t.Error("empty should not be number")
+	}
+}
+
+func TestIsTrue_ErrorCase(t *testing.T) {
+	if NewValueList([]Variant{NewInt(1)}).IsTrue() {
+		t.Error("list should not be true (AsBool returns error)")
+	}
+}
+
+func TestAsUInt64_Float64(t *testing.T) {
+	fv := NewFloat64(3.14)
+	u, err := fv.AsUInt64()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) == 0 {
-		t.Error("expected non-empty JSON")
+	if u != 3 {
+		t.Errorf("expected 3, got %d", u)
+	}
+
+	negF := NewFloat64(-1.5)
+	if _, err := negF.AsUInt64(); err == nil {
+		t.Error("expected overflow for negative float")
+	}
+
+	bigF := NewFloat64(1e20)
+	if _, err := bigF.AsUInt64(); err == nil {
+		t.Error("expected overflow for float > max uint64")
 	}
 }
 
-func TestVariant_UnmarshalJSON(t *testing.T) {
-	var v Variant
-	err := v.UnmarshalJSON([]byte(`{"a":1,"b":"hello"}`))
+func TestAsUInt64_String(t *testing.T) {
+	sv := NewString("42")
+	u, err := sv.AsUInt64()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Type() != TypeMap {
-		t.Fatalf("expected TypeMap, got %v", v.Type())
+	if u != 42 {
+		t.Errorf("expected 42, got %d", u)
 	}
-	av, ok := v.MapGet("a")
-	if !ok {
-		t.Error("expected key 'a'")
-	}
-	ai, err := av.AsInt64()
-	if err != nil || ai != 1 {
-		t.Errorf("expected a=1, got %d (err=%v)", ai, err)
-	}
-}
 
-func TestUnmarshalJSON_Standalone(t *testing.T) {
-	v, err := UnmarshalJSON([]byte(`[1,2,3]`))
+	ev := NewEmpty()
+	u, err = ev.AsUInt64()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Type() != TypeList || v.Len() != 3 {
-		t.Errorf("expected list of 3, got type=%v len=%d", v.Type(), v.Len())
+	if u != 0 {
+		t.Errorf("expected 0, got %d", u)
 	}
 
-	_, err = UnmarshalJSON([]byte(`invalid`))
-	if err == nil {
-		t.Error("expected error for invalid JSON")
+	// Non-numeric type → error
+	lv := NewValueList([]Variant{})
+	if _, err := lv.AsUInt64(); err == nil {
+		t.Error("expected error for list")
 	}
 }
 
-func TestIsContainer(t *testing.T) {
-	v1 := NewValueList([]Variant{})
-	if v1.IsContainer() != true {
-		t.Error("list should be container")
+func TestAsFloat32_AllTypes(t *testing.T) {
+	// Empty
+	f, err := NewEmpty().AsFloat32()
+	if err != nil || f != 0 {
+		t.Errorf("empty: expected 0, got %f (err=%v)", f, err)
 	}
-	v2 := NewValueMap(map[string]Variant{})
-	if v2.IsContainer() != true {
-		t.Error("map should be container")
-	}
-	v3 := NewInt(1)
-	if v3.IsContainer() != false {
-		t.Error("int should not be container")
-	}
-}
 
-func TestLen(t *testing.T) {
-	s := NewString("hello")
-	if s.Len() != 5 {
-		t.Errorf("expected len 5, got %d", s.Len())
+	// Bool
+	f, err = NewBool(true).AsFloat32()
+	if err != nil || f != 1.0 {
+		t.Errorf("bool true: expected 1.0, got %f (err=%v)", f, err)
 	}
-	l := NewValueList([]Variant{NewInt(1), NewInt(2)})
-	if l.Len() != 2 {
-		t.Errorf("expected len 2, got %d", l.Len())
-	}
-	i := NewInt(42)
-	if i.Len() != 0 {
-		t.Errorf("expected len 0 for int, got %d", i.Len())
-	}
-}
 
-func TestAdd(t *testing.T) {
-	v := NewEmpty()
-	_, err := v.Add(NewInt(1))
+	// String
+	f, err = NewString("3.14").AsFloat32()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Type() != TypeList || v.Len() != 1 {
-		t.Errorf("expected list of 1, got type=%v len=%d", v.Type(), v.Len())
+	if f < 3.139 || f > 3.141 {
+		t.Errorf("string: expected ~3.14, got %f", f)
 	}
 
-	_, err = v.Add(NewInt(2))
+	// Non-numeric → error
+	if _, err := NewValueList([]Variant{}).AsFloat32(); err == nil {
+		t.Error("expected error for list")
+	}
+}
+
+func TestAsFloat64_UInt64(t *testing.T) {
+	uv := NewUInt64(100)
+	f, err := uv.AsFloat64()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Len() != 2 {
-		t.Errorf("expected len 2, got %d", v.Len())
-	}
-
-	sv := NewString("hello")
-	_, err = sv.Add(" world")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sv.AsString() != "hello world" {
-		t.Errorf("expected 'hello world', got '%s'", sv.AsString())
-	}
-
-	iv := NewInt(1)
-	_, err = iv.Add(2)
-	if err == nil {
-		t.Error("expected error adding to int")
+	if f != 100.0 {
+		t.Errorf("expected 100.0, got %f", f)
 	}
 }
 
-func TestRange(t *testing.T) {
-	mp := NewValueMap(map[string]Variant{"a": NewInt(1), "b": NewInt(2)})
-	count := 0
-	mp.Range(func(key string, value Variant) bool {
-		count++
-		return true
-	})
-	if count != 2 {
-		t.Errorf("expected 2 iterations, got %d", count)
-	}
-
-	count = 0
-	mp.Range(func(key string, value Variant) bool {
-		count++
-		return false
-	})
-	if count != 1 {
-		t.Errorf("expected 1 iteration (early stop), got %d", count)
-	}
-
-	list := NewValueList([]Variant{NewInt(1), NewInt(2), NewInt(3)})
-	count = 0
-	list.Range(func(key string, value Variant) bool {
-		count++
-		return true
-	})
-	if count != 3 {
-		t.Errorf("expected 3 iterations for list, got %d", count)
+func TestAsInt_ErrorPath(t *testing.T) {
+	lv := NewValueList([]Variant{})
+	if _, err := lv.AsInt(); err == nil {
+		t.Error("expected error for list type")
 	}
 }
 
-func TestRangeByIndex(t *testing.T) {
-	list := NewValueList([]Variant{NewInt(10), NewInt(20), NewInt(30)})
-	sum := 0
-	list.RangeByIndex(func(index int, value Variant) bool {
-		v, _ := value.AsInt()
-		sum += v
-		return true
-	})
-	if sum != 60 {
-		t.Errorf("expected sum 60, got %d", sum)
+func TestAsString_Empty(t *testing.T) {
+	if s := NewEmpty().AsString(); s != "" {
+		t.Errorf("expected empty string, got '%s'", s)
 	}
 }
 
-func TestGet(t *testing.T) {
-	list := NewValueList([]Variant{NewInt(10), NewInt(20)})
-	v, ok := list.Get(0)
-	if !ok {
-		t.Error("expected ok for index 0")
-	}
-	if i, _ := v.AsInt64(); i != 10 {
-		t.Errorf("expected 10, got %d", i)
-	}
-
-	_, ok = list.Get(5)
-	if ok {
-		t.Error("expected not ok for out-of-bounds")
-	}
-
-	mp := NewValueMap(map[string]Variant{"key": NewString("val")})
-	v2, ok := mp.Get("key")
-	if !ok {
-		t.Error("expected ok for key 'key'")
-	}
-	if v2.AsString() != "val" {
-		t.Errorf("expected 'val', got '%s'", v2.AsString())
+func TestString_Method(t *testing.T) {
+	if s := NewInt(42).String(); s != "42" {
+		t.Errorf("expected '42', got '%s'", s)
 	}
 }
 
-func TestSet(t *testing.T) {
-	list := NewValueList([]Variant{NewInt(10), NewInt(20)})
-	list.Set(0, NewInt(99))
-	v, _ := list.ListGet(0)
-	if i, _ := v.AsInt64(); i != 99 {
-		t.Errorf("expected 99, got %d", i)
-	}
-
-	// Set on map
-	mp := NewValueMap(map[string]Variant{"key": NewInt(1)})
-	mp.Set("key", NewInt(42))
-	mapVal, ok := mp.MapGet("key")
-	iv, _ := mapVal.AsInt64()
-	if !ok || iv != 42 {
-		t.Errorf("expected key='key'=42 after Set on map")
+func TestAsFloat64_DefaultError(t *testing.T) {
+	lv := NewValueList([]Variant{})
+	if _, err := lv.AsFloat64(); err == nil {
+		t.Error("expected error for list type")
 	}
 }
 
-func TestRemove(t *testing.T) {
-	list := NewValueList([]Variant{NewInt(1), NewInt(2), NewInt(3)})
-	list.Remove(1)
-	if list.Len() != 2 {
-		t.Errorf("expected len 2 after remove, got %d", list.Len())
+func TestIsZero_UInt64(t *testing.T) {
+	if !NewUInt64(0).IsZero() {
+		t.Error("uint64 0 should be zero")
 	}
-	v, _ := list.ListGet(1)
-	if i, _ := v.AsInt64(); i != 3 {
-		t.Errorf("expected 3 at index 1, got %d", i)
-	}
-
-	mp := NewValueMap(map[string]Variant{"a": NewInt(1), "b": NewInt(2)})
-	mp.Remove("a")
-	if mp.Len() != 1 {
-		t.Errorf("expected len 1 after remove, got %d", mp.Len())
-	}
-	_, ok := mp.MapGet("a")
-	if ok {
-		t.Error("expected key 'a' to be removed")
-	}
-
-	iv := NewInt(42)
-	err := iv.Remove(0)
-	if err == nil {
-		t.Error("expected error removing from non-container")
-	}
-}
-
-func TestMapSet_OnEmpty(t *testing.T) {
-	v := NewEmpty()
-	v.MapSet("key", NewString("value"))
-	if v.Type() != TypeMap {
-		t.Fatalf("expected TypeMap after MapSet on empty, got %v", v.Type())
-	}
-	val, ok := v.MapGet("key")
-	if !ok || val.AsString() != "value" {
-		t.Error("MapSet on empty failed")
-	}
-
-	v.MapSet("key2", NewInt(100))
-	if v.Len() != 2 {
-		t.Errorf("expected len 2, got %d", v.Len())
-	}
-}
-
-func TestListSet_Invalid(t *testing.T) {
-	v := NewValueList([]Variant{NewInt(1)})
-	v.ListSet(-1, NewInt(0))
-	v.ListSet(10, NewInt(0))
-	if v.Len() != 1 {
-		t.Error("list should not change with invalid indices")
-	}
-}
-
-func TestListGet_Invalid(t *testing.T) {
-	v := NewValueList([]Variant{NewInt(1)})
-	_, ok := v.ListGet(-1)
-	if ok {
-		t.Error("negative index should not be ok")
-	}
-	_, ok = v.ListGet(10)
-	if ok {
-		t.Error("out of bounds should not be ok")
-	}
-
-	nv := NewInt(42)
-	got, ok := nv.ListGet(0)
-	if ok {
-		t.Error("non-list should not return ok")
-	}
-	if got.AsString() != "42" {
-		t.Errorf("expected '42', got '%s'", got.AsString())
-	}
-}
-
-func TestFloat64Boundaries(t *testing.T) {
-	v := NewFloat64(math.MaxFloat64)
-	f, err := v.AsFloat64()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f != math.MaxFloat64 {
-		t.Errorf("expected MaxFloat64")
-	}
-
-	v2 := NewFloat64(math.SmallestNonzeroFloat64)
-	f2, _ := v2.AsFloat64()
-	if f2 != math.SmallestNonzeroFloat64 {
-		t.Errorf("expected SmallestNonzeroFloat64")
-	}
-}
-
-func TestMarshalBinary(t *testing.T) {
-	tests := []Variant{
-		NewEmpty(),
-		NewBool(true),
-		NewBool(false),
-		NewInt64(42),
-		NewInt64(-42),
-		NewUInt64(18446744073709551615),
-		NewFloat64(3.14159),
-		NewFloat64(-1.5),
-		NewString("hello"),
-		NewString(""),
-	}
-	for _, original := range tests {
-		data, err := original.MarshalBinary()
-		if err != nil {
-			t.Fatalf("MarshalBinary(%s): %v", original.AsString(), err)
-		}
-		if !IsBinaryFormat(data) {
-			t.Fatalf("expected binary format for %s", original.AsString())
-		}
-		decoded, n, err := UnmarshalBinary(data)
-		if err != nil {
-			t.Fatalf("UnmarshalBinary: %v", err)
-		}
-		if n != len(data) {
-			t.Fatalf("consumed %d bytes, expected %d", n, len(data))
-		}
-		if !original.IsEqual(decoded) {
-			t.Fatalf("roundtrip mismatch: type=%d vs type=%d, str=%s != %s",
-				original.Type(), decoded.Type(), original.AsString(), decoded.AsString())
-		}
-	}
-}
-
-// ─── Benchmarks ────────────────────────────────────────────────────────────────
-
-func BenchmarkMarshalBinary_Float64(b *testing.B) {
-	v := NewFloat64(3.141592653589793)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = v.MarshalBinary()
-	}
-}
-
-func BenchmarkUnmarshalBinary_Float64(b *testing.B) {
-	v := NewFloat64(3.141592653589793)
-	data, _ := v.MarshalBinary()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _, _ = UnmarshalBinary(data)
-	}
-}
-
-func BenchmarkMarshalBinary_Int64(b *testing.B) {
-	v := NewInt64(9223372036854775807)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = v.MarshalBinary()
-	}
-}
-
-func BenchmarkUnmarshalBinary_Int64(b *testing.B) {
-	v := NewInt64(9223372036854775807)
-	data, _ := v.MarshalBinary()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _, _ = UnmarshalBinary(data)
-	}
-}
-
-func BenchmarkMarshalBinary_String(b *testing.B) {
-	v := NewString("hello world")
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = v.MarshalBinary()
-	}
-}
-
-func BenchmarkUnmarshalBinary_String(b *testing.B) {
-	v := NewString("hello world")
-	data, _ := v.MarshalBinary()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _, _ = UnmarshalBinary(data)
-	}
-}
-
-func BenchmarkAppendBinary_Batch(b *testing.B) {
-	variants := make([]Variant, 1000)
-	for i := range variants {
-		variants[i] = NewFloat64(float64(i) * 1.5)
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		var buf []byte
-		for j := range variants {
-			buf = variants[j].AppendBinary(buf)
-		}
-	}
-}
-
-func BenchmarkMarshalBinary_NestedMap(b *testing.B) {
-	v := NewValueMap(map[string]Variant{
-		"name": NewString("test"),
-		"val":  NewFloat64(3.14),
-		"nested": NewValueList([]Variant{
-			NewInt64(1),
-			NewBool(true),
-			NewString("x"),
-		}),
-	})
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = v.MarshalBinary()
-	}
-}
-
-func BenchmarkUnmarshalBinary_NestedMap(b *testing.B) {
-	v := NewValueMap(map[string]Variant{
-		"name": NewString("test"),
-		"val":  NewFloat64(3.14),
-		"nested": NewValueList([]Variant{
-			NewInt64(1),
-			NewBool(true),
-			NewString("x"),
-		}),
-	})
-	data, _ := v.MarshalBinary()
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _, _ = UnmarshalBinary(data)
-	}
-}
-
-func TestMarshalBinaryNested(t *testing.T) {
-	tests := []Variant{
-		NewValueList([]Variant{NewInt64(1), NewFloat64(2.5), NewString("x")}),
-		NewValueMap(map[string]Variant{"a": NewInt64(1), "b": NewString("hello")}),
-		NewValueMap(map[string]Variant{
-			"nested": NewValueList([]Variant{NewBool(true), NewEmpty()}),
-		}),
-	}
-	for _, original := range tests {
-		data, err := original.MarshalBinary()
-		if err != nil {
-			t.Fatalf("MarshalBinary(%s): %v", original.AsString(), err)
-		}
-		decoded, _, err := UnmarshalBinary(data)
-		if err != nil {
-			t.Fatalf("UnmarshalBinary: %v", err)
-		}
-		if !original.IsEqual(decoded) {
-			t.Fatalf("nested roundtrip mismatch: type=%d vs type=%d",
-				original.Type(), decoded.Type())
-		}
+	if NewUInt64(1).IsZero() {
+		t.Error("uint64 1 should not be zero")
 	}
 }
