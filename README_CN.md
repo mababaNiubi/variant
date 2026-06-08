@@ -177,6 +177,8 @@ type Person struct {
     Age  int    `json:"age"`
 }
 v := variant.New(Person{Name: "Alice", Age: 30})
+var p Person
+v.UnmarshalTo(&p)
 // v 为 TypeMap, 键为 "name" 和 "age" (来自 json tag)
 ```
 
