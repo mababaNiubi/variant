@@ -7,6 +7,12 @@ import (
 	"strings"
 )
 
+var (
+	isIntRe  = regexp.MustCompile(`^[\+-]?\d+$`)
+	isDecRe1 = regexp.MustCompile(`^[\+-]?\d*\.\d+$`)
+	isDecRe2 = regexp.MustCompile(`^[\+-]?\d+\.\d*$`)
+)
+
 type Type int8
 
 const (
@@ -97,17 +103,10 @@ func IsSciNum(s string) bool {
 	return false
 }
 
-// 判断是否为小数
 func isDec(s string) bool {
-	// eg: 11.15, -0.15, +10.15, 3., .15,
-	// err: +. 0..
-	match1, _ := regexp.MatchString(`^[\+-]?\d*\.\d+$`, s)
-	match2, _ := regexp.MatchString(`^[\+-]?\d+\.\d*$`, s)
-	return match1 || match2
+	return isDecRe1.MatchString(s) || isDecRe2.MatchString(s)
 }
 
-// 判断是否为整数
 func isInt(s string) bool {
-	match, _ := regexp.MatchString(`^[\+-]?\d+$`, s)
-	return match
+	return isIntRe.MatchString(s)
 }

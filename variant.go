@@ -24,73 +24,75 @@ func NewEmpty() Variant {
 }
 
 func New(v any) Variant {
-	switch v.(type) {
+	switch val := v.(type) {
 	case bool:
-		return NewBool(v.(bool))
+		return NewBool(val)
 	case string:
-		value := v.(string)
-		switch GetStringValueType(value) {
+		switch GetStringValueType(val) {
 		case TypeInt64:
-			ato, err := strconv.Atoi(value)
+			ato, err := strconv.Atoi(val)
 			if err != nil {
-				return NewString(value)
+				return NewString(val)
 			}
 			return NewInt(ato)
 		case TypeEmpty:
 			return NewEmpty()
 		case TypeFloat64:
-			ato, err := strconv.ParseFloat(value, 64)
+			ato, err := strconv.ParseFloat(val, 64)
 			if err != nil {
-				return NewString(value)
+				return NewString(val)
 			}
 			return NewFloat64(ato)
 		default:
-			if json.Valid([]byte(value)) {
-				va, _ := UnmarshalJSON([]byte(value))
+			if looksLikeJSON(val) && json.Valid([]byte(val)) {
+				va, _ := UnmarshalJSON([]byte(val))
 				return va
 			}
 		}
-		return NewString(v.(string))
+		return NewString(val)
 	case float64:
-		return NewValue(v.(float64))
+		return NewValue(val)
 	case float32:
-		return NewValue(float64(v.(float32)))
+		return NewValue(float64(val))
 	case int:
-		return NewInt(v.(int))
+		return NewInt(val)
 	case int8:
-		return NewInt(int(v.(int8)))
+		return NewInt(int(val))
 	case int16:
-		return NewInt(int(v.(int16)))
+		return NewInt(int(val))
 	case int32:
-		return NewInt(int(v.(int32)))
+		return NewInt(int(val))
 	case int64:
-		return NewInt64(v.(int64))
+		return NewInt64(val)
 	case uint:
-		return NewUInt64(uint64(v.(uint)))
+		return NewUInt64(uint64(val))
 	case uint64:
-		return NewUInt64(v.(uint64))
+		return NewUInt64(val)
 	case uint32:
-		return NewUInt64(uint64(v.(uint32)))
+		return NewUInt64(uint64(val))
 	case uint16:
-		return NewUInt64(uint64(v.(uint16)))
+		return NewUInt64(uint64(val))
 	case uint8:
-		return NewUInt64(uint64(v.(uint8)))
+		return NewUInt64(uint64(val))
 	case []byte:
-		value := v.([]byte)
-		if json.Valid(value) {
-			va, _ := UnmarshalJSON(value)
+		if json.Valid(val) {
+			va, _ := UnmarshalJSON(val)
 			return va
 		}
 		va, _ := decode(reflect.ValueOf(v))
 		return va
 	case Variant:
-		return v.(Variant)
+		return val
 	case *Variant:
-		return *v.(*Variant)
+		return *val
 	case []Variant:
-		return NewValueList(v.([]Variant))
+		return NewValueList(val)
 	case map[string]Variant:
-		return NewValueMap(v.(map[string]Variant))
+		return NewValueMap(val)
+	case []any:
+		return decodeSlice(val)
+	case map[string]any:
+		return decodeMap(val)
 	default:
 		va, _ := decode(reflect.ValueOf(v))
 		return va

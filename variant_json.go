@@ -30,6 +30,34 @@ func UnmarshalJSON(data []byte) (Variant, error) {
 	return decode(reflect.ValueOf(value))
 }
 
+func looksLikeJSON(s string) bool {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case ' ', '\t', '\n', '\r':
+			continue
+		default:
+			return s[i] == '{' || s[i] == '['
+		}
+	}
+	return false
+}
+
+func decodeSlice(v []any) Variant {
+	list := make([]Variant, len(v))
+	for i := range v {
+		list[i] = New(v[i])
+	}
+	return Variant{variantType: TypeList, complexValue: list}
+}
+
+func decodeMap(v map[string]any) Variant {
+	mp := make(map[string]Variant, len(v))
+	for k, val := range v {
+		mp[k] = New(val)
+	}
+	return Variant{variantType: TypeMap, complexValue: mp}
+}
+
 func decode(rValue reflect.Value) (Variant, error) {
 	switch rValue.Kind() {
 	case reflect.String:
