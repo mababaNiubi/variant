@@ -51,9 +51,9 @@ func New(v any) Variant {
 		}
 		return NewString(val)
 	case float64:
-		return NewValue(val)
+		return NewFloat64(val)
 	case float32:
-		return NewValue(float64(val))
+		return NewFloat64(float64(val))
 	case int:
 		return NewInt(val)
 	case int8:
