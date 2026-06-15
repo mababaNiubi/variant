@@ -1,13 +1,18 @@
 package variant
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
+	"strconv"
+	"unsafe"
 )
 
 func (p Variant) MarshalJSON() ([]byte, error) {
-	return json.Marshal(p.AsInterface())
+	buf := make([]byte, 0, 256)
+	return p.appendJSON(buf)
 }
 
 func (m *Variant) UnmarshalJSON(data []byte) error {
@@ -22,12 +27,176 @@ func (m *Variant) UnmarshalJSON(data []byte) error {
 }
 
 func UnmarshalJSON(data []byte) (Variant, error) {
-	var value any
-	err := json.Unmarshal(data, &value)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	v, err := decodeToken(dec)
 	if err != nil {
 		return NewEmpty(), err
 	}
-	return decode(reflect.ValueOf(value))
+	return v, nil
+}
+
+const hexDigits = "0123456789abcdef"
+
+func (v Variant) appendJSON(dst []byte) ([]byte, error) {
+	switch v.variantType {
+	case TypeEmpty:
+		return append(dst, "null"...), nil
+	case TypeBool:
+		if v.numberValue != 0 {
+			return append(dst, "true"...), nil
+		}
+		return append(dst, "false"...), nil
+	case TypeInt64:
+		return strconv.AppendInt(dst, v.numberValue, 10), nil
+	case TypeUInt64:
+		return strconv.AppendUint(dst, uint64(v.numberValue), 10), nil
+	case TypeFloat64:
+		f := *(*float64)(unsafe.Pointer(&v.numberValue))
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return dst, fmt.Errorf("json: unsupported value: %v", f)
+		}
+		return strconv.AppendFloat(dst, f, 'g', -1, 64), nil
+	case TypeString:
+		return appendJSONString(dst, v.complexValue.(string)), nil
+	case TypeList:
+		list := v.complexValue.([]Variant)
+		dst = append(dst, '[')
+		for i := range list {
+			if i > 0 {
+				dst = append(dst, ',')
+			}
+			var err error
+			dst, err = list[i].appendJSON(dst)
+			if err != nil {
+				return dst, err
+			}
+		}
+		return append(dst, ']'), nil
+	case TypeMap:
+		mp := v.complexValue.(map[string]Variant)
+		dst = append(dst, '{')
+		first := true
+		for k, val := range mp {
+			if !first {
+				dst = append(dst, ',')
+			}
+			first = false
+			dst = appendJSONString(dst, k)
+			dst = append(dst, ':')
+			var err error
+			dst, err = val.appendJSON(dst)
+			if err != nil {
+				return dst, err
+			}
+		}
+		return append(dst, '}'), nil
+	default:
+		return append(dst, "null"...), nil
+	}
+}
+
+func appendJSONString(dst []byte, s string) []byte {
+	dst = append(dst, '"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '"':
+			dst = append(dst, '\\', '"')
+		case c == '\\':
+			dst = append(dst, '\\', '\\')
+		case c == '\n':
+			dst = append(dst, '\\', 'n')
+		case c == '\r':
+			dst = append(dst, '\\', 'r')
+		case c == '\t':
+			dst = append(dst, '\\', 't')
+		case c < 0x20:
+			dst = append(dst, '\\', 'u', '0', '0', hexDigits[c>>4], hexDigits[c&0xF])
+		case c == '<' || c == '>' || c == '&':
+			dst = append(dst, '\\', 'u', '0', '0', hexDigits[c>>4], hexDigits[c&0xF])
+		default:
+			dst = append(dst, c)
+		}
+	}
+	return append(dst, '"')
+}
+
+func decodeToken(dec *json.Decoder) (Variant, error) {
+	t, err := dec.Token()
+	if err != nil {
+		return NewEmpty(), err
+	}
+	switch v := t.(type) {
+	case nil:
+		return NewEmpty(), nil
+	case bool:
+		return NewBool(v), nil
+	case json.Number:
+		return decodeJSONNumber(string(v))
+	case string:
+		return NewString(v), nil
+	case json.Delim:
+		if v == '[' {
+			return decodeJSONArray(dec)
+		}
+		if v == '{' {
+			return decodeJSONObject(dec)
+		}
+	}
+	return NewEmpty(), fmt.Errorf("unexpected JSON token: %v", t)
+}
+
+func decodeJSONNumber(s string) (Variant, error) {
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return NewInt64(i), nil
+	}
+	if u, err := strconv.ParseUint(s, 10, 64); err == nil {
+		return NewUInt64(u), nil
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return NewEmpty(), fmt.Errorf("invalid JSON number: %s", s)
+	}
+	return NewFloat64(f), nil
+}
+
+func decodeJSONArray(dec *json.Decoder) (Variant, error) {
+	var list []Variant
+	for dec.More() {
+		val, err := decodeToken(dec)
+		if err != nil {
+			return NewEmpty(), err
+		}
+		list = append(list, val)
+	}
+	if _, err := dec.Token(); err != nil {
+		return NewEmpty(), err
+	}
+	return NewValueList(list), nil
+}
+
+func decodeJSONObject(dec *json.Decoder) (Variant, error) {
+	mp := make(map[string]Variant)
+	for dec.More() {
+		keyToken, err := dec.Token()
+		if err != nil {
+			return NewEmpty(), err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return NewEmpty(), fmt.Errorf("expected string key, got %T", keyToken)
+		}
+		val, err := decodeToken(dec)
+		if err != nil {
+			return NewEmpty(), err
+		}
+		mp[key] = val
+	}
+	if _, err := dec.Token(); err != nil {
+		return NewEmpty(), err
+	}
+	return NewValueMap(mp), nil
 }
 
 func looksLikeJSON(s string) bool {
