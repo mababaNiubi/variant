@@ -73,9 +73,11 @@ func (v Variant) Increase(va Variant) (Variant, error) {
 		case TypeList:
 			return NewValueList(append(v.complexValue.([]Variant), va.complexValue.([]Variant)...)), nil
 		case TypeMap:
-			mp := v.complexValue.(map[string]Variant)
-			for key, value := range va.complexValue.(map[string]Variant) {
-				mp[key] = value
+			mp, _ := v.mapVariant()
+			if vaMap, ok := va.mapVariant(); ok {
+				for key, value := range vaMap {
+					mp[key] = value
+				}
 			}
 			return NewValueMap(mp), nil
 		case TypeString:

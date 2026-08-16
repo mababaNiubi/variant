@@ -15,7 +15,8 @@ func (c Variant) IsContainer() bool {
 func (c *Variant) Len() int {
 	switch c.variantType {
 	case TypeMap:
-		return len(c.complexValue.(map[string]Variant))
+		mp, _ := c.mapVariant()
+		return len(mp)
 	case TypeList:
 		return len(c.complexValue.([]Variant))
 	case TypeString:
@@ -53,7 +54,7 @@ func (c *Variant) Add(value any) (*Variant, error) {
 func (c *Variant) Range(f func(key string, value Variant) bool) {
 	switch c.variantType {
 	case TypeMap:
-		mp, ok := c.complexValue.(map[string]Variant)
+		mp, ok := c.mapVariant()
 		if !ok {
 			return
 		}
@@ -80,7 +81,7 @@ func (c *Variant) Range(f func(key string, value Variant) bool) {
 func (c *Variant) RangeByIndex(f func(index int, value Variant) bool) {
 	switch c.variantType {
 	case TypeMap:
-		mp, ok := c.complexValue.(map[string]Variant)
+		mp, ok := c.mapVariant()
 		if !ok {
 			return
 		}
@@ -120,7 +121,7 @@ func (c *Variant) Remove(i any) error {
 		c.complexValue = append(list[:index], list[index+1:]...)
 	case TypeMap:
 		key := New(i).AsString()
-		mp, ok := c.complexValue.(map[string]Variant)
+		mp, ok := c.mapVariant()
 		if !ok {
 			return nil
 		}
@@ -200,12 +201,19 @@ func (c *Variant) ListSet(index int, value any) {
 
 func (c *Variant) MapGet(key string) (Variant, bool) {
 	if c.variantType == TypeMap {
-		mp, ok := c.complexValue.(map[string]Variant)
-		if !ok {
-			return NewEmpty(), false
+		switch m := c.complexValue.(type) {
+		case map[string]Variant:
+			v, has := m[key]
+			return v, has
+		case map[string]any:
+			// Raw structure: wrap only the requested value, never convert the
+			// whole map (this runs per point during query condition evaluation).
+			val, has := m[key]
+			if !has {
+				return NewEmpty(), false
+			}
+			return NewRawValue(val), true
 		}
-		v, has := mp[key]
-		return v, has
 	}
 	return NewEmpty(), false
 }
@@ -213,7 +221,7 @@ func (c *Variant) MapGet(key string) (Variant, bool) {
 func (c *Variant) MapSet(key string, value any) {
 	switch c.variantType {
 	case TypeMap:
-		mp, ok := c.complexValue.(map[string]Variant)
+		mp, ok := c.mapVariant()
 		if !ok {
 			return
 		}

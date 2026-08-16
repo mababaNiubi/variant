@@ -196,7 +196,7 @@ func (v Variant) setList(rv reflect.Value) error {
 }
 
 func (v Variant) setMap(rv reflect.Value) error {
-	mp, _ := v.complexValue.(map[string]Variant)
+	mp, _ := v.mapVariant()
 	switch rv.Kind() {
 	case reflect.Map:
 		nv := reflect.MakeMapWithSize(rv.Type(), len(mp))

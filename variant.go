@@ -92,7 +92,15 @@ func New(v any) Variant {
 	case []any:
 		return decodeSlice(val)
 	case map[string]any:
-		return decodeMap(val)
+		// Shallow-copy the structure map so the Variant owns it: callers may
+		// safely reuse or mutate their map after New (the write path iterates
+		// this map later, possibly from an async flush goroutine). Values are
+		// copied as-is — no per-value Variant conversion, unlike decodeMap.
+		cp := make(map[string]any, len(val))
+		for k, v := range val {
+			cp[k] = v
+		}
+		return Variant{variantType: TypeMap, complexValue: cp}
 	default:
 		va, _ := decode(reflect.ValueOf(v))
 		return va
@@ -169,6 +177,74 @@ func NewValueMap(v map[string]Variant) Variant {
 	}
 }
 
+// NewRawValue wraps a raw structure field value as a Variant using its Go type
+// as authoritative. Unlike New, a Go string is never reclassified as a number:
+// in a raw map[string]any structure the value's concrete type already tells us
+// what it is. Used by the WAL encoder and the columnar write path so the live
+// and replayed representations agree.
+func NewRawValue(val any) Variant {
+	switch t := val.(type) {
+	case bool:
+		return NewBool(t)
+	case float64:
+		return NewFloat64(t)
+	case float32:
+		return NewFloat64(float64(t))
+	case int:
+		return NewInt(t)
+	case int8:
+		return NewInt(int(t))
+	case int16:
+		return NewInt(int(t))
+	case int32:
+		return NewInt(int(t))
+	case int64:
+		return NewInt64(t)
+	case uint:
+		return NewUInt64(uint64(t))
+	case uint8:
+		return NewUInt64(uint64(t))
+	case uint16:
+		return NewUInt64(uint64(t))
+	case uint32:
+		return NewUInt64(uint64(t))
+	case uint64:
+		return NewUInt64(t)
+	case string:
+		return NewString(t)
+	case []byte:
+		return NewString(string(t))
+	default:
+		// Nested structures, lists, and unknown types fall through to New.
+		return New(val)
+	}
+}
+
+// mapVariant returns the structure contents as a typed map[string]Variant. For
+// values created from map[string]any via New, this converts lazily on demand;
+// the tsdb write path avoids this by encoding straight from RawStructure.
+func (v Variant) mapVariant() (map[string]Variant, bool) {
+	switch m := v.complexValue.(type) {
+	case map[string]Variant:
+		return m, true
+	case map[string]any:
+		mp := make(map[string]Variant, len(m))
+		for k, val := range m {
+			mp[k] = New(val)
+		}
+		return mp, true
+	}
+	return nil, false
+}
+
+// RawStructure returns the underlying map[string]any when this Variant was
+// created from a map via New, without converting each value to a Variant.
+// The write path uses this to encode columnar structures directly.
+func (v Variant) RawStructure() (map[string]any, bool) {
+	m, ok := v.complexValue.(map[string]any)
+	return m, ok
+}
+
 func (v Variant) Type() Type {
 	return v.variantType
 }
@@ -189,8 +265,15 @@ func (v Variant) IsEmpty() bool {
 		}
 		return num == len(vs)
 	case TypeMap:
-		vs := v.complexValue.(map[string]Variant)
-		return len(vs) == 0
+		// Length check only — never convert the raw map[string]any form here;
+		// IsEmpty runs on every written structure value.
+		switch m := v.complexValue.(type) {
+		case map[string]Variant:
+			return len(m) == 0
+		case map[string]any:
+			return len(m) == 0
+		}
+		return true
 	default:
 		return false
 	}
@@ -364,7 +447,7 @@ func (v *Variant) AsInterface() any {
 		}
 		return result
 	case TypeMap:
-		mp, ok := v.complexValue.(map[string]Variant)
+		mp, ok := v.mapVariant()
 		result := make(map[string]any)
 		if !ok {
 			return result
@@ -404,7 +487,7 @@ func (v Variant) AsString() string {
 		}
 		return "[" + strings.Join(strList, ",") + "]"
 	case TypeMap:
-		valMap := v.complexValue.(map[string]Variant)
+		valMap, _ := v.mapVariant()
 		var strKeyValues []string
 		for k, value := range valMap {
 			if value.variantType == TypeString || value.variantType == TypeEmpty {

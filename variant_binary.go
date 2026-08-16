@@ -47,13 +47,25 @@ func (v Variant) appendValue(dst []byte) []byte {
 			dst = list[i].appendValue(dst)
 		}
 	case TypeMap:
-		mp := v.complexValue.(map[string]Variant)
-		var lb [4]byte
-		binary.BigEndian.PutUint32(lb[:], uint32(len(mp)))
-		dst = append(dst, lb[:]...)
-		for k, val := range mp {
-			dst = appendString(dst, k)
-			dst = val.appendValue(dst)
+		// Raw (map[string]any from New) and typed (map[string]Variant) both
+		// serialize the same way: key, then value bytes.
+		switch m := v.complexValue.(type) {
+		case map[string]any:
+			var lb [4]byte
+			binary.BigEndian.PutUint32(lb[:], uint32(len(m)))
+			dst = append(dst, lb[:]...)
+			for k, val := range m {
+				dst = appendString(dst, k)
+				dst = appendRawValue(dst, val)
+			}
+		case map[string]Variant:
+			var lb [4]byte
+			binary.BigEndian.PutUint32(lb[:], uint32(len(m)))
+			dst = append(dst, lb[:]...)
+			for k, val := range m {
+				dst = appendString(dst, k)
+				dst = val.appendValue(dst)
+			}
 		}
 	}
 	return dst
@@ -65,6 +77,46 @@ func appendString(dst []byte, s string) []byte {
 	dst = append(dst, lb[:]...)
 	dst = append(dst, s...)
 	return dst
+}
+
+// appendRawValue serializes a raw map[string]any field value. Strings are
+// written directly (no string→interface boxing); other values fall through to
+// NewRawValue.appendValue.
+func appendRawValue(dst []byte, val any) []byte {
+	switch t := val.(type) {
+	case string:
+		return appendString(dst, t)
+	case bool:
+		return NewBool(t).appendValue(dst)
+	case float64:
+		return NewFloat64(t).appendValue(dst)
+	case float32:
+		return NewFloat64(float64(t)).appendValue(dst)
+	case int:
+		return NewInt(t).appendValue(dst)
+	case int8:
+		return NewInt(int(t)).appendValue(dst)
+	case int16:
+		return NewInt(int(t)).appendValue(dst)
+	case int32:
+		return NewInt(int(t)).appendValue(dst)
+	case int64:
+		return NewInt64(t).appendValue(dst)
+	case uint:
+		return NewUInt64(uint64(t)).appendValue(dst)
+	case uint8:
+		return NewUInt64(uint64(t)).appendValue(dst)
+	case uint16:
+		return NewUInt64(uint64(t)).appendValue(dst)
+	case uint32:
+		return NewUInt64(uint64(t)).appendValue(dst)
+	case uint64:
+		return NewUInt64(t).appendValue(dst)
+	case []byte:
+		return appendString(dst, string(t))
+	default:
+		return NewRawValue(val).appendValue(dst)
+	}
 }
 
 // MarshalBinary encodes the variant with format marker. Convenience wrapper

@@ -74,7 +74,7 @@ func (v Variant) appendJSON(dst []byte) ([]byte, error) {
 		}
 		return append(dst, ']'), nil
 	case TypeMap:
-		mp := v.complexValue.(map[string]Variant)
+		mp, _ := v.mapVariant()
 		dst = append(dst, '{')
 		first := true
 		for k, val := range mp {
