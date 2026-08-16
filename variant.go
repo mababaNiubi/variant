@@ -17,6 +17,32 @@ type Variant struct {
 	complexValue any   // 字符串、list、map 用该变量存储
 }
 
+// structPairs is the compact representation of a TypeMap structure: parallel
+// key/value slices. Building and iterating a small structure costs a fraction
+// of a map (no hashing, no growth rehash), which is what makes high-volume
+// structure writes and reads viable. A map never aliases the caller's input,
+// so callers may freely reuse their map after New.
+type structPairs struct {
+	keys []string
+	vals []Variant
+}
+
+func (p *structPairs) len() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.keys)
+}
+
+func (p *structPairs) get(key string) (Variant, bool) {
+	for i, k := range p.keys {
+		if k == key {
+			return p.vals[i], true
+		}
+	}
+	return NewEmpty(), false
+}
+
 func NewEmpty() Variant {
 	return Variant{
 		variantType: TypeEmpty,
@@ -92,15 +118,16 @@ func New(v any) Variant {
 	case []any:
 		return decodeSlice(val)
 	case map[string]any:
-		// Shallow-copy the structure map so the Variant owns it: callers may
-		// safely reuse or mutate their map after New (the write path iterates
-		// this map later, possibly from an async flush goroutine). Values are
-		// copied as-is — no per-value Variant conversion, unlike decodeMap.
-		cp := make(map[string]any, len(val))
+		// Compact: convert each value to a Variant (NewRawValue wraps by Go
+		// type, no string reclassification) and store as key/value pair slices.
+		// Values are copied into the slices, so callers may freely reuse or
+		// mutate their map afterwards.
+		sp := &structPairs{keys: make([]string, 0, len(val)), vals: make([]Variant, 0, len(val))}
 		for k, v := range val {
-			cp[k] = v
+			sp.keys = append(sp.keys, k)
+			sp.vals = append(sp.vals, NewRawValue(v))
 		}
-		return Variant{variantType: TypeMap, complexValue: cp}
+		return Variant{variantType: TypeMap, complexValue: sp}
 	default:
 		va, _ := decode(reflect.ValueOf(v))
 		return va
@@ -171,9 +198,24 @@ func NewValueList(v []Variant) Variant {
 }
 
 func NewValueMap(v map[string]Variant) Variant {
+	sp := &structPairs{keys: make([]string, 0, len(v)), vals: make([]Variant, 0, len(v))}
+	for k, val := range v {
+		sp.keys = append(sp.keys, k)
+		sp.vals = append(sp.vals, val)
+	}
 	return Variant{
 		variantType:  TypeMap,
-		complexValue: v,
+		complexValue: sp,
+	}
+}
+
+// NewStruct builds a compact structure from parallel key/value slices without
+// allocating a map. Keys and vals must be the same length. Used by the columnar
+// read path to reconstruct structures cheaply.
+func NewStruct(keys []string, vals []Variant) Variant {
+	return Variant{
+		variantType:  TypeMap,
+		complexValue: &structPairs{keys: keys, vals: vals},
 	}
 }
 
@@ -220,29 +262,25 @@ func NewRawValue(val any) Variant {
 	}
 }
 
-// mapVariant returns the structure contents as a typed map[string]Variant. For
-// values created from map[string]any via New, this converts lazily on demand;
-// the tsdb write path avoids this by encoding straight from RawStructure.
+// mapVariant converts a structure into a map[string]Variant. Consumers that
+// only need to iterate use StructPairs or Range directly; this exists for the
+// few callers that require map semantics (mutation by key in container ops).
 func (v Variant) mapVariant() (map[string]Variant, bool) {
-	switch m := v.complexValue.(type) {
-	case map[string]Variant:
-		return m, true
-	case map[string]any:
-		mp := make(map[string]Variant, len(m))
-		for k, val := range m {
-			mp[k] = New(val)
-		}
-		return mp, true
+	sp, ok := v.complexValue.(*structPairs)
+	if !ok || sp == nil {
+		return nil, false
 	}
-	return nil, false
+	mp := make(map[string]Variant, len(sp.keys))
+	for i := range sp.keys {
+		mp[sp.keys[i]] = sp.vals[i]
+	}
+	return mp, true
 }
 
-// RawStructure returns the underlying map[string]any when this Variant was
-// created from a map via New, without converting each value to a Variant.
-// The write path uses this to encode columnar structures directly.
-func (v Variant) RawStructure() (map[string]any, bool) {
-	m, ok := v.complexValue.(map[string]any)
-	return m, ok
+// StructPairs exposes the compact key/value slices backing a TypeMap.
+func (v Variant) StructPairs() (*structPairs, bool) {
+	sp, ok := v.complexValue.(*structPairs)
+	return sp, ok
 }
 
 func (v Variant) Type() Type {
@@ -265,15 +303,9 @@ func (v Variant) IsEmpty() bool {
 		}
 		return num == len(vs)
 	case TypeMap:
-		// Length check only — never convert the raw map[string]any form here;
-		// IsEmpty runs on every written structure value.
-		switch m := v.complexValue.(type) {
-		case map[string]Variant:
-			return len(m) == 0
-		case map[string]any:
-			return len(m) == 0
-		}
-		return true
+		// Length check only — IsEmpty runs on every written structure value.
+		sp, _ := v.StructPairs()
+		return sp.len() == 0
 	default:
 		return false
 	}
@@ -447,13 +479,10 @@ func (v *Variant) AsInterface() any {
 		}
 		return result
 	case TypeMap:
-		mp, ok := v.mapVariant()
-		result := make(map[string]any)
-		if !ok {
-			return result
-		}
-		for k, value := range mp {
-			result[k] = value.AsInterface()
+		sp, _ := v.StructPairs()
+		result := make(map[string]any, sp.len())
+		for i := range sp.keys {
+			result[sp.keys[i]] = sp.vals[i].AsInterface()
 		}
 		return result
 	default:
@@ -487,9 +516,11 @@ func (v Variant) AsString() string {
 		}
 		return "[" + strings.Join(strList, ",") + "]"
 	case TypeMap:
-		valMap, _ := v.mapVariant()
+		sp, _ := v.StructPairs()
 		var strKeyValues []string
-		for k, value := range valMap {
+		for i := range sp.keys {
+			k := sp.keys[i]
+			value := sp.vals[i]
 			if value.variantType == TypeString || value.variantType == TypeEmpty {
 				strKeyValues = append(strKeyValues, fmt.Sprintf("\"%s\":\"%s\"", k, value.AsString()))
 			} else {

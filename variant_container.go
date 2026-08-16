@@ -15,8 +15,8 @@ func (c Variant) IsContainer() bool {
 func (c *Variant) Len() int {
 	switch c.variantType {
 	case TypeMap:
-		mp, _ := c.mapVariant()
-		return len(mp)
+		sp, _ := c.StructPairs()
+		return sp.len()
 	case TypeList:
 		return len(c.complexValue.([]Variant))
 	case TypeString:
@@ -54,12 +54,9 @@ func (c *Variant) Add(value any) (*Variant, error) {
 func (c *Variant) Range(f func(key string, value Variant) bool) {
 	switch c.variantType {
 	case TypeMap:
-		mp, ok := c.mapVariant()
-		if !ok {
-			return
-		}
-		for key, value := range mp {
-			if !f(key, value) {
+		sp, _ := c.StructPairs()
+		for i := range sp.keys {
+			if !f(sp.keys[i], sp.vals[i]) {
 				return
 			}
 		}
@@ -81,16 +78,11 @@ func (c *Variant) Range(f func(key string, value Variant) bool) {
 func (c *Variant) RangeByIndex(f func(index int, value Variant) bool) {
 	switch c.variantType {
 	case TypeMap:
-		mp, ok := c.mapVariant()
-		if !ok {
-			return
-		}
-		index := 0
-		for _, value := range mp {
-			if !f(index, value) {
+		sp, _ := c.StructPairs()
+		for i := range sp.vals {
+			if !f(i, sp.vals[i]) {
 				return
 			}
-			index++
 		}
 	case TypeList:
 		list, ok := c.complexValue.([]Variant)
@@ -121,12 +113,18 @@ func (c *Variant) Remove(i any) error {
 		c.complexValue = append(list[:index], list[index+1:]...)
 	case TypeMap:
 		key := New(i).AsString()
-		mp, ok := c.mapVariant()
+		sp, ok := c.StructPairs()
 		if !ok {
 			return nil
 		}
-		delete(mp, key)
-		c.complexValue = mp
+		for j, k := range sp.keys {
+			if k == key {
+				sp.keys = append(sp.keys[:j], sp.keys[j+1:]...)
+				sp.vals = append(sp.vals[:j], sp.vals[j+1:]...)
+				break
+			}
+		}
+		c.complexValue = sp
 	default:
 		return errors.New(errUnsupportedType)
 	}
@@ -201,19 +199,11 @@ func (c *Variant) ListSet(index int, value any) {
 
 func (c *Variant) MapGet(key string) (Variant, bool) {
 	if c.variantType == TypeMap {
-		switch m := c.complexValue.(type) {
-		case map[string]Variant:
-			v, has := m[key]
-			return v, has
-		case map[string]any:
-			// Raw structure: wrap only the requested value, never convert the
-			// whole map (this runs per point during query condition evaluation).
-			val, has := m[key]
-			if !has {
-				return NewEmpty(), false
-			}
-			return NewRawValue(val), true
+		sp, ok := c.StructPairs()
+		if !ok {
+			return NewEmpty(), false
 		}
+		return sp.get(key)
 	}
 	return NewEmpty(), false
 }
@@ -221,16 +211,23 @@ func (c *Variant) MapGet(key string) (Variant, bool) {
 func (c *Variant) MapSet(key string, value any) {
 	switch c.variantType {
 	case TypeMap:
-		mp, ok := c.mapVariant()
+		sp, ok := c.StructPairs()
 		if !ok {
 			return
 		}
-		mp[key] = New(value)
-		c.complexValue = mp
+		nv := New(value)
+		for j, k := range sp.keys {
+			if k == key {
+				sp.vals[j] = nv
+				return
+			}
+		}
+		sp.keys = append(sp.keys, key)
+		sp.vals = append(sp.vals, nv)
+		c.complexValue = sp
 	case TypeEmpty:
-		mp := make(map[string]Variant)
-		mp[key] = New(value)
-		c.complexValue = mp
+		sp := &structPairs{keys: []string{key}, vals: []Variant{New(value)}}
+		c.complexValue = sp
 		c.variantType = TypeMap
 	default:
 		return

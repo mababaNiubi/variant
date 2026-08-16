@@ -47,24 +47,25 @@ func (v Variant) appendValue(dst []byte) []byte {
 			dst = list[i].appendValue(dst)
 		}
 	case TypeMap:
-		// Raw (map[string]any from New) and typed (map[string]Variant) both
-		// serialize the same way: key, then value bytes.
-		switch m := v.complexValue.(type) {
-		case map[string]any:
+		if sp, ok := v.StructPairs(); ok {
 			var lb [4]byte
-			binary.BigEndian.PutUint32(lb[:], uint32(len(m)))
+			binary.BigEndian.PutUint32(lb[:], uint32(sp.len()))
 			dst = append(dst, lb[:]...)
-			for k, val := range m {
-				dst = appendString(dst, k)
-				dst = appendRawValue(dst, val)
+			for i := range sp.keys {
+				dst = appendString(dst, sp.keys[i])
+				dst = sp.vals[i].appendValue(dst)
 			}
-		case map[string]Variant:
-			var lb [4]byte
-			binary.BigEndian.PutUint32(lb[:], uint32(len(m)))
-			dst = append(dst, lb[:]...)
-			for k, val := range m {
-				dst = appendString(dst, k)
-				dst = val.appendValue(dst)
+		} else {
+			// Legacy map representation fallback.
+			switch m := v.complexValue.(type) {
+			case map[string]Variant:
+				var lb [4]byte
+				binary.BigEndian.PutUint32(lb[:], uint32(len(m)))
+				dst = append(dst, lb[:]...)
+				for k, val := range m {
+					dst = appendString(dst, k)
+					dst = val.appendValue(dst)
+				}
 			}
 		}
 	}

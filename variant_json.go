@@ -253,22 +253,22 @@ func decode(rValue reflect.Value) (Variant, error) {
 			complexValue: list,
 		}, nil
 	case reflect.Map:
-		mp := make(map[string]Variant)
+		keys := make([]string, 0, rValue.Len())
+		vals := make([]Variant, 0, rValue.Len())
 		for _, key := range rValue.MapKeys() {
 			v, err := decode(rValue.MapIndex(key))
 			if err != nil {
 				return NewEmpty(), err
 			}
-			mp[key.String()] = v
+			keys = append(keys, key.String())
+			vals = append(vals, v)
 		}
-		return Variant{
-			variantType:  TypeMap,
-			complexValue: mp,
-		}, nil
+		return NewStruct(keys, vals), nil
 	case reflect.Struct:
-		mp := make(map[string]Variant)
 		number := rValue.NumField()
 		typeOf := rValue.Type()
+		keys := make([]string, 0, number)
+		vals := make([]Variant, 0, number)
 		for i := 0; i < number; i++ {
 			u, err := decode(rValue.Field(i))
 			if err != nil {
@@ -278,12 +278,10 @@ func decode(rValue reflect.Value) (Variant, error) {
 			if len(key) == 0 {
 				key = typeOf.Field(i).Name
 			}
-			mp[key] = u
+			keys = append(keys, key)
+			vals = append(vals, u)
 		}
-		return Variant{
-			variantType:  TypeMap,
-			complexValue: mp,
-		}, nil
+		return NewStruct(keys, vals), nil
 	case reflect.Interface, reflect.Pointer:
 		return decode(rValue.Elem())
 	case reflect.Invalid:
