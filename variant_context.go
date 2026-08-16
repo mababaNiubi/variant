@@ -3,14 +3,7 @@ package variant
 import (
 	"errors"
 	"math"
-	"regexp"
 	"strings"
-)
-
-var (
-	isIntRe  = regexp.MustCompile(`^[\+-]?\d+$`)
-	isDecRe1 = regexp.MustCompile(`^[\+-]?\d*\.\d+$`)
-	isDecRe2 = regexp.MustCompile(`^[\+-]?\d+\.\d*$`)
 )
 
 type Type int8
@@ -63,10 +56,26 @@ func compareNumberBySymbol[T int | int8 | int16 | int32 | int64 | uint | uint8 |
 func IsFloat64Equal(a, b float64) bool {
 	return math.Abs(a-b) < 1e-14
 }
+
+// isNumChar reports whether c may appear in a numeric string (integer, decimal,
+// or scientific notation). Used as a cheap pre-filter so plain strings (the
+// common case) are rejected in a single pass instead of running regexes.
+func isNumChar(c byte) bool {
+	return (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.' || c == 'e' || c == 'E'
+}
+
 func IsNumber(s string) bool {
 	// 去除首尾空格
 	s = strings.TrimSpace(s)
-	// 否则判断是否为整数或小数
+	if len(s) == 0 {
+		return false
+	}
+	// 快速拒绝：含数字不可能出现的字符则直接判非数字
+	for i := 0; i < len(s); i++ {
+		if !isNumChar(s[i]) {
+			return false
+		}
+	}
 	return isInt(s) || isDec(s) || IsSciNum(s)
 }
 
@@ -75,9 +84,16 @@ func GetStringValueType(s string) Type {
 	if len(s) == 0 {
 		return TypeEmpty
 	}
+	// 快速拒绝：纯字符串（最常见）一次扫描即出
+	for i := 0; i < len(s); i++ {
+		if !isNumChar(s[i]) {
+
+			return TypeString
+		}
+	}
 	if isInt(s) {
 		return TypeInt64
-	} else if IsNumber(s) {
+	} else if isDec(s) || IsSciNum(s) {
 		return TypeFloat64
 	}
 	return TypeString
@@ -103,10 +119,42 @@ func IsSciNum(s string) bool {
 	return false
 }
 
+// isDec reports whether s matches a decimal literal: optional sign, optional
+// digits, a dot, and at least one digit on either side ("1.5", ".5", "5.").
 func isDec(s string) bool {
-	return isDecRe1.MatchString(s) || isDecRe2.MatchString(s)
+	i := 0
+	if i < len(s) && (s[i] == '+' || s[i] == '-') {
+		i++
+	}
+	before := 0
+	for ; i < len(s) && s[i] >= '0' && s[i] <= '9'; i++ {
+		before++
+	}
+	if i >= len(s) || s[i] != '.' {
+		return false
+	}
+	i++
+	after := 0
+	for ; i < len(s) && s[i] >= '0' && s[i] <= '9'; i++ {
+		after++
+	}
+	return (before+after > 0) && i == len(s)
 }
 
+// isInt reports whether s matches an integer literal: optional sign and 1+
+// digits ("123", "-42", "+7").
 func isInt(s string) bool {
-	return isIntRe.MatchString(s)
+	i := 0
+	if i < len(s) && (s[i] == '+' || s[i] == '-') {
+		i++
+	}
+	if i >= len(s) {
+		return false
+	}
+	for ; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
